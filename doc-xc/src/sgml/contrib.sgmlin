@@ -104,6 +104,9 @@ CREATE EXTENSION <replaceable>module_name</> FROM unpackaged;
  &earthdistance;
  &file-fdw;
  &fuzzystrmatch;
+<!## XC>
+ &gtmutil;
+<!## end>
  &hstore;
  &intagg;
  &intarray;

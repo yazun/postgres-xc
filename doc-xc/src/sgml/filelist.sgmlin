@@ -138,6 +138,7 @@
 <!ENTITY pgtrgm          SYSTEM "pgtrgm.sgml">
 <!ENTITY pgupgrade       SYSTEM "pgupgrade.sgml">
 <!## XC>
+<!ENTITY gtmutil         SYSTEM "gtmutil.sgml">
 <!ENTITY pgxcclean       SYSTEM "pgxcclean.sgml">
 <!ENTITY pgxcddl         SYSTEM "pgxcddl.sgml">
 <!ENTITY pgxcmonitor	 SYSTEM "pgxcmonitor.sgml">

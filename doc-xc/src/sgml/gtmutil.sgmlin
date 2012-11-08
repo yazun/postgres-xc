@@ -1,0 +1,96 @@
+<!-- doc/src/sgml/pgxcclean.sgml -->
+
+<sect1 id="gtmutil" xreflabel="gtmutil">
+
+<title>pgxc_clean</title>
+
+ <indexterm zone="gtmutil">
+  <primary>gtm_util</primary>
+ </indexterm>
+
+ <sect2>
+  <title>Overview</title>
+
+&xconly;
+    <para>
+      gtm_util has the following synopsis.
+<programlisting>
+pgxc_clean <optional> <replaceable>option</> </optional> unregister <replaceable>nodename</><optional>
+</programlisting>
+    </para>
+
+    <para>
+     <application>gtm_util</application> is Postgres-XC utility to
+     unregister specified node from GTM.   When a node crashes, it may
+     stay registered at GTM.    When a slave of the failed node takes
+     over and attempt to register itself to GTM, it may fail.   This
+     utility cleans it up.
+    </para>
+
+    <para>
+     You should run this utility against GTM, not GTM_Proxy.
+    </para>
+
+    <para>
+	 <replaceable>nodename</> specifies the node name you're unregistering.
+    </para>
+ </sect2>
+
+ <sect2>
+  <title>Options</title>
+ 
+<variablelist>
+ 
+    <varlistentry>
+      <term><option>-h<replaceable class="parameter">hostname</replaceable></></term>
+      <listitem>
+      <para>
+      Hostname of the GTM to connect to.
+      </para>
+      </listitem>
+    </varlistentry>
+
+    <varlistentry>
+      <term><option>-n<replaceable class="parameter">nodename</replaceable></option></term>
+      <listitem>
+      <para>
+	   Specify the name of this program used to connect to GTM.   If
+	   this option is not specified, pgxc_clean_gtm will be used.
+      </para>
+      </listitem>
+    </varlistentry>
+
+      <term><option>-p <replaceable class="parameter">port_number</replaceable></></term>
+      <listitem>
+      <para>
+       Specifies the port number of the GTM.
+      </para>
+      </listitem>
+    </varlistentry>
+
+    <varlistentry>
+      <term><option>-v</></term>
+      <listitem>
+      <para>
+       Write as much information as possible.
+      </para>
+      </listitem>
+    </varlistentry>
+
+    <varlistentry>
+     <term><option>-Z<replaceable class="parameter">nodetype</replaceable></option></term>
+
+     <listitem>
+      <para>
+	   Specifies the type of the unregistered node.   You can specify
+       <filename>gtm</>, <filename>gtm_proxy</>,
+       <filename>gtm_proxy_postmaster</>, <filename>coordinator</>, or
+       <filename>datanode</>.
+      </para>
+     </listitem>
+    </varlistentry>
+
+  </variablelist>
+ </sect2>
+
+</sect1>
