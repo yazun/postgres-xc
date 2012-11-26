@@ -20,7 +20,7 @@ EX_OBJS = $(gtm_builddir)/common/assert.o \
 	  $(gtm_builddir)/client/libgtmclient.a
 
 PG_CPPFLAGS  = -DFRONTEND -DDLSUFFIX=\"$(DLSUFFIX)\" -I$(srcdir) -I$(libpq_srcdir)
-PG_LIBS = $(libpq_pgport) $(PTHREAD_LIBS)
+PG_LIBS = $(libpq_pgport) $(PTHREAD_LIBS) $(EX_OBJS)
 
 ifdef USE_PGXS
 PG_CONFIG = pg_config
