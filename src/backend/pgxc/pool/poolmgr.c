@@ -2256,7 +2256,7 @@ grow_pool(DatabasePool *dbPool, Oid node)
 			destroy_slot(slot);
 
 			char * errString = NULL;
-			asprintf(&errString, "%s %s", errmsg("failed to connect to Datanode: "),
+			asprintf(&errString, "%s %s", "failed to connect to Datanode: ",
 			 nodePool->connstr);
 			ereport(LOG,
 					(errcode(ERRCODE_CONNECTION_FAILURE),
