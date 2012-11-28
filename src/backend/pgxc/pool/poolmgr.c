@@ -2255,10 +2255,12 @@ grow_pool(DatabasePool *dbPool, Oid node)
 		{
 			destroy_slot(slot);
 
-
+			char * errString = NULL;
+			asprintf(&s, "%s %s", errmsg("failed to connect to Datanode: "),
+			 nodePool->connstr);
 			ereport(LOG,
 					(errcode(ERRCODE_CONNECTION_FAILURE),
-					 strcat(errmsg("failed to connect to Datanode: "),nodePool->connstr)));
+					 errString));
 			break;
 		}
 
