@@ -2254,9 +2254,11 @@ grow_pool(DatabasePool *dbPool, Oid node)
 		if (!PGXCNodeConnected(slot->conn))
 		{
 			destroy_slot(slot);
+
+
 			ereport(LOG,
 					(errcode(ERRCODE_CONNECTION_FAILURE),
-					 errmsg("failed to connect to Datanode")));
+					 stract(errmsg("failed to connect to Datanode: "),nodePool->connstr)));
 			break;
 		}
 
