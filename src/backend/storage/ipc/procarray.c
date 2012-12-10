@@ -18,6 +18,23 @@
  * at need by checking for pid == 0.
  *
 #ifdef PGXC
+ * Vanilla PostgreSQL assumes maximum TransactinIds in any snapshot is
+ * arrayP->maxProcs.  It does not apply to XC because XC's snapshot
+ * should include XIDs running in other node, which may come at any
+ * time.   This means that needed size of xip varies from time to time.
+ *
+ * This must be handled properly in all the functions in this module.
+ *
+ * The member max_xcnt was added as SnapshotData member to indicate the
+ * real size of xip array.
+ * 
+ * Here, the following assumption is made for SnapshotData struct throughout
+ * this module.
+ *
+ * 1. xip member physical size is indicated by max_xcnt member.
+ * 2. If max_xcnt == 0, it means that xip members is NULL, and vise versa.
+ * 3. xip (and subxip) are allocated usign malloc() or realloc() directly.
+ *
  * For Postgres-XC, there is some special handling for ANALYZE.
  * An XID for a local ANALYZE command will never involve other nodes.
  * Also, ANALYZE may run for a long time, affecting snapshot xmin values
@@ -179,6 +196,10 @@ void UnsetGlobalSnapshotData(void);
 static bool GetPGXCSnapshotData(Snapshot snapshot);
 static bool GetSnapshotDataDataNode(Snapshot snapshot);
 static bool GetSnapshotDataCoordinator(Snapshot snapshot);
+static bool resizeXip(Snapshot snapshot, int newsize);
+static bool resizeSubxip(Snapshot snapshot, int newsize);
+static void cleanSnapshot(Snapshot snapshot);
+
 /* Global snapshot data */
 static SnapshotSource snapshot_source = SNAPSHOT_UNDEFINED;
 static int gxmin = InvalidTransactionId;
@@ -1324,6 +1345,8 @@ GetSnapshotData(Snapshot snapshot)
 	int			subcount = 0;
 	bool		suboverflowed = false;
 
+	Assert(snapshot != NULL);
+
 #ifdef PGXC  /* PGXC_DATANODE */
 	/*
 	 * Obtain a global snapshot for a Postgres-XC session
@@ -1331,6 +1354,11 @@ GetSnapshotData(Snapshot snapshot)
 	 */
 	if (GetPGXCSnapshotData(snapshot))
 		return snapshot;
+	/*
+	 * The codes below run when GetPGXCSnapshotData() couldn't get snapshot from
+	 * GTM.  So no data in snapshot will be used.
+	 */
+	cleanSnapshot(snapshot);
 #endif
 
 	/*
@@ -1338,8 +1366,6 @@ GetSnapshotData(Snapshot snapshot)
 	 * if no master connection
 	 */
 
-
-	Assert(snapshot != NULL);
 
 	/*
 	 * Allocating space for maxProcs xids is usually overkill; numProcs would
@@ -1354,6 +1380,10 @@ GetSnapshotData(Snapshot snapshot)
 	 */
 	if (snapshot->xip == NULL)
 	{
+#ifdef PGXC
+		resizeXip(snapshot, arrayP->maxProcs);
+		resizeSubxip(snapshot, TOTAL_MAX_CACHED_SUBXIDS);
+#else
 		/*
 		 * First call for this snapshot. Snapshot is same size whether or not
 		 * we are in recovery, see later comments.
@@ -1371,6 +1401,7 @@ GetSnapshotData(Snapshot snapshot)
 			ereport(ERROR,
 					(errcode(ERRCODE_OUT_OF_MEMORY),
 					 errmsg("out of memory")));
+#endif
 	}
 
 	/*
@@ -1447,6 +1478,9 @@ GetSnapshotData(Snapshot snapshot)
 				continue;
 
 			/* Add XID to snapshot. */
+#ifdef PGXC
+			resizeXip(snapshot, count + 1);
+#endif
 			snapshot->xip[count++] = xid;
 
 			/*
@@ -2822,37 +2856,8 @@ GetSnapshotDataDataNode(Snapshot snapshot)
 		 * maxProcs does not change at runtime, we can simply reuse the previous
 		 * xip arrays if any.  (This relies on the fact that all callers pass
 		 * static SnapshotData structs.) */
-		if (snapshot->xip == NULL)
-		{
-			ProcArrayStruct *arrayP = procArray;
-			/*
-			 * First call for this snapshot
-			 */
-			snapshot->xip = (TransactionId *)
-				malloc(arrayP->maxProcs * sizeof(TransactionId));
-			if (snapshot->xip == NULL)
-				ereport(ERROR,
-						(errcode(ERRCODE_OUT_OF_MEMORY),
-						 errmsg("out of memory")));
-
-			Assert(snapshot->subxip == NULL);
-			snapshot->subxip = (TransactionId *)
-				malloc(arrayP->maxProcs * PGPROC_MAX_CACHED_SUBXIDS * sizeof(TransactionId));
-			if (snapshot->subxip == NULL)
-				ereport(ERROR,
-						(errcode(ERRCODE_OUT_OF_MEMORY),
-						 errmsg("out of memory")));
-		}
-		else if (snapshot->max_xcnt < gxcnt)
-		{
-			snapshot->xip = (TransactionId *)
-				realloc(snapshot->xip, gxcnt * sizeof(TransactionId));
-			if (snapshot->xip == NULL)
-				ereport(ERROR,
-						(errcode(ERRCODE_OUT_OF_MEMORY),
-						 errmsg("out of memory")));
-			snapshot->max_xcnt = gxcnt;
-		}
+		resizeXip(snapshot, Max(arrayP->maxProcs, gxcnt));
+		resizeSubxip(snapshot, PGPROC_MAX_CACHED_SUBXIDS);
 
 		memcpy(snapshot->xip, gxip, gxcnt * sizeof(TransactionId));
 		snapshot->curcid = GetCurrentCommandId(false);
@@ -2925,17 +2930,7 @@ GetSnapshotDataDataNode(Snapshot snapshot)
 						continue;
 					if (proc != MyProc)
 					{
-						if (snapshot->xcnt >= snapshot->max_xcnt)
-						{
-							snapshot->max_xcnt += arrayP->numProcs;
-
-							snapshot->xip = (TransactionId *)
-								realloc(snapshot->xip, snapshot->max_xcnt * sizeof(TransactionId));
-							if (snapshot->xip == NULL)
-								ereport(ERROR,
-										(errcode(ERRCODE_OUT_OF_MEMORY),
-										 errmsg("out of memory")));
-						}
+						resizeXip(snapshot, snapshot->xcnt+1);
 						snapshot->xip[snapshot->xcnt++] = xid;
 						elog(DEBUG1, "Adding Analyze for xid %d to snapshot", pgxact->xid);
 					}
@@ -3003,44 +2998,10 @@ GetSnapshotDataCoordinator(Snapshot snapshot)
 		 * xip arrays if any.  (This relies on the fact that all callers pass
 		 * static SnapshotData structs.)
 		 */
-		if (snapshot->xip == NULL)
 		{
 			ProcArrayStruct *arrayP = procArray;
-			/*
-			 * First call for this snapshot
-			 */
-			snapshot->xip = (TransactionId *)
-				malloc(Max(arrayP->maxProcs, gtm_snapshot->sn_xcnt) * sizeof(TransactionId));
-			if (snapshot->xip == NULL)
-				ereport(ERROR,
-						(errcode(ERRCODE_OUT_OF_MEMORY),
-						 errmsg("out of memory")));
-			snapshot->max_xcnt = Max(arrayP->maxProcs, gtm_snapshot->sn_xcnt);
-
-			/*
-			 * FIXME
-			 *
-			 * We really don't support subtransaction in PGXC right now, but
-			 * when we would, we should fix the allocation below
-			 */
-			Assert(snapshot->subxip == NULL);
-			snapshot->subxip = (TransactionId *)
-				malloc(arrayP->maxProcs * PGPROC_MAX_CACHED_SUBXIDS * sizeof(TransactionId));
-
-			if (snapshot->subxip == NULL)
-				ereport(ERROR,
-						(errcode(ERRCODE_OUT_OF_MEMORY),
-						 errmsg("out of memory")));
-		}
-		else if (snapshot->max_xcnt < gtm_snapshot->sn_xcnt)
-		{
-			snapshot->xip = (TransactionId *)
-				realloc(snapshot->xip, gtm_snapshot->sn_xcnt * sizeof(TransactionId));
-			if (snapshot->xip == NULL)
-				ereport(ERROR,
-						(errcode(ERRCODE_OUT_OF_MEMORY),
-						 errmsg("out of memory")));
-			snapshot->max_xcnt = gtm_snapshot->sn_xcnt;
+			resizeXip(snapshot, Max(arrayP->maxProcs, gtm_snapshot->sn_xcnt));
+			resizeSubxip(snapshot, PGPROC_MAX_CACHED_SUBXIDS);
 		}
 
 		memcpy(snapshot->xip, gtm_snapshot->sn_xip, gtm_snapshot->sn_xcnt * sizeof(TransactionId));
@@ -3071,6 +3032,82 @@ GetSnapshotDataCoordinator(Snapshot snapshot)
 	return false;
 }
 
+/*
+ * Handlers for xip and subxip member array size, only for XC.
+ *
+ * Assumes xip is NULL when max_xcnt == 0
+ */
+static bool
+resizeXip(Snapshot snapshot, int newsize)
+{
+#define xipResizeUnit (64)
+	newsize = ((newsize + xipResizeUnit - 1)/xipResizeUnit)*xipResizeUnit;
+
+	if (snapshot->max_xcnt == 0)
+	{
+		snapshot->xip = malloc(newsize * sizeof(TransactionId));
+		if (snapshot->xip == NULL)
+		{
+			ereport(ERROR,
+					(errcode(ERRCODE_OUT_OF_MEMORY),
+					 errmsg("out of memory")));
+			return false;
+		}
+		snapshot->max_xcnt = newsize;
+		snapshot->xcnt = 0;
+		return true;
+	}
+	else if (snapshot->max_xcnt >= newsize)
+		return true;
+	else
+	{
+		snapshot->xip = realloc(snapshot->xip, newsize * sizeof(TransactionId));
+		if (snapshot->xip == NULL)
+		{
+			ereport(ERROR,
+					(errcode(ERRCODE_OUT_OF_MEMORY),
+					 errmsg("out of memory")));
+			return false;
+		}
+		snapshot->max_xcnt = newsize;
+		return true;
+	}
+	return false;
+}
+
+/*
+ * Because XC does not support subtransaction so far, this function allocates
+ * subxip array with the fixes size of TOTAL_MAX_CACHED_SUBXIDS.  This is
+ * controlled by resizeXip() above.
+ * If subxip member is not NULL, it assumes subxip array has TOTAL_MAX_CACHED_SUBXIDS
+ * size, regardless what size is specified.
+ * This part needs improvement when XC supports subtransaction.
+ */
+static bool
+resizeSubxip(Snapshot snapshot, int newsize)
+{
+	if (snapshot->subxip)
+		return true;
+	snapshot->subxip = (TransactionId *)
+		malloc(TOTAL_MAX_CACHED_SUBXIDS * sizeof(TransactionId));
+	if (snapshot->subxip == NULL)
+	{
+		ereport(ERROR,
+				(errcode(ERRCODE_OUT_OF_MEMORY),
+				 errmsg("out of memory")));
+		return false;
+	}
+	return true;
+}
+
+/* Cleanup the snapshot */
+static void
+cleanSnapshot(Snapshot snapshot)
+{
+	snapshot->xcnt = 0;
+	snapshot->subxcnt = 0;
+	snapshot->xmin = snapshot->xmax = InvalidTransactionId;
+}
 #endif /* PGXC */
 
 /* ----------------------------------------------
