@@ -2352,6 +2352,7 @@ pmdie(SIGNAL_ARGS)
 #ifdef PGXC /* PGXC_COORD */
 			if (IS_PGXC_COORDINATOR && PgPoolerPID != 0)
 				signal_child(PgPoolerPID, SIGQUIT);
+
 #endif
 			if (BgWriterPID != 0)
 				signal_child(BgWriterPID, SIGQUIT);
@@ -4449,16 +4450,28 @@ sigusr1_handler(SIGNAL_ARGS)
 		if (IS_PGXC_COORDINATOR)
 		{
 			if (RegisterGTM(GTM_NODE_COORDINATOR, PostPortNumber, data_directory) < 0)
-				ereport(FATAL,
-						(errcode(ERRCODE_IO_ERROR),
-						 errmsg("Can not register Coordinator on GTM")));
+			{
+				UnregisterGTM(GTM_NODE_COORDINATOR);
+				if (RegisterGTM(GTM_NODE_COORDINATOR, PostPortNumber, data_directory) < 0)
+				{
+					ereport(FATAL,
+							(errcode(ERRCODE_IO_ERROR),
+							 errmsg("Can not register Coordinator on GTM")));
+				}
+			}
 		}
 		if (IS_PGXC_DATANODE)
 		{
 			if (RegisterGTM(GTM_NODE_DATANODE, PostPortNumber, data_directory) < 0)
-				ereport(FATAL,
-						(errcode(ERRCODE_IO_ERROR),
-						 errmsg("Can not register Datanode on GTM")));
+			{
+				UnregisterGTM(GTM_NODE_DATANODE);
+				if (RegisterGTM(GTM_NODE_DATANODE, PostPortNumber, data_directory) < 0)
+				{
+					ereport(FATAL,
+							(errcode(ERRCODE_IO_ERROR),
+							 errmsg("Can not register Datanode on GTM")));
+				}
+			}
 		}
 	}
 #endif
