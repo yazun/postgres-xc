@@ -177,7 +177,7 @@ static void SetDataDir(void);
 static void ChangeToDataDir(void);
 static void checkDataDir(void);
 static void DeleteLockFile(const char *filename);
-static void RegisterProxy(bool is_reconnect);
+static void RegisterProxy(bool is_reconnect, bool is_retry);
 static void UnregisterProxy(void);
 static GTM_Conn *ConnectGTM(void);
 static void ReleaseCmdBackup(GTMProxy_CommandInfo *cmdinfo);
@@ -260,7 +260,7 @@ BaseInit()
 	Recovery_SaveRegisterFileName(GTMProxyDataDir);
 
 	/* Register Proxy on GTM */
-	RegisterProxy(false);
+	RegisterProxy(false, false);
 
 	DebugFileOpen();
 
@@ -549,6 +549,7 @@ help(const char *progname)
 	printf(_("  -n count		Number of worker threads\n"));
 	printf(_("  -D directory	GTM proxy working directory\n"));
 	printf(_("  -l filename		GTM proxy log file name \n"));
+	printf(_("  -V, --version	output version information, then exit\n"));
 	printf(_("  --help          show this help, then exit\n"));
 }
 
@@ -587,6 +588,11 @@ main(int argc, char *argv[])
 		if (strcmp(argv[1], "--help") == 0 || strcmp(argv[1], "-?") == 0)
 		{
 			help(argv[0]);
+			exit(0);
+		}
+		if (strcmp(argv[1], "--version") == 0 || strcmp(argv[1], "-V") == 0)
+		{
+			puts("gtm_proxy (Postgres-XC) " PGXC_VERSION);
 			exit(0);
 		}
 	}
@@ -956,7 +962,7 @@ ServerLoop(void)
 			 */
 
 			elog(LOG, "Main Thread reconnecting to new GTM.");
-			RegisterProxy(TRUE);
+			RegisterProxy(TRUE, false);
 			elog(LOG, "Reconnected.");
 
 			/* If it is done, then release the lock for worker threads. */
@@ -3145,7 +3151,7 @@ failed:
  * NewGTMServerPortNumber.
  */
 static void
-RegisterProxy(bool is_reconnect)
+RegisterProxy(bool is_reconnect, bool is_retry)
 {
 	GTM_PGXCNodeType type = GTM_NODE_GTM_PROXY;
 	GTM_PGXCNodePort port = (GTM_PGXCNodePort) GTMProxyPortNumber;
@@ -3230,7 +3236,14 @@ RegisterProxy(bool is_reconnect)
 	return;
 
 failed:
-	elog(ERROR, "can not register Proxy on GTM");
+	if (!is_retry)
+	{
+		elog(NOTICE, "could not register Proxy on GTM. Trying to unregister myself and then retry.");
+		UnregisterProxy();
+		return RegisterProxy(is_reconnect, true);
+	}
+	else
+		elog(ERROR, "can not register Proxy on GTM");
 }
 
 static GTM_Conn*
