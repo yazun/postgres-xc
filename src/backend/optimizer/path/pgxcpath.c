@@ -23,9 +23,6 @@
 #include "optimizer/pgxcplan.h"
 
 static RemoteQueryPath *pgxc_find_remotequery_path(RelOptInfo *rel);
-static ExecNodes *pgxc_is_join_reducible(ExecNodes *inner_en, ExecNodes *outer_en,
-						Relids in_relids, Relids out_relids, JoinType jointype,
-						List *join_quals, List *rtables);
 static RemoteQueryPath *create_remotequery_path(PlannerInfo *root, RelOptInfo *rel,
 								ExecNodes *exec_nodes, RemoteQueryPath *leftpath,
 								RemoteQueryPath *rightpath, JoinType jointype,
@@ -140,7 +137,7 @@ create_plainrel_rqpath(PlannerInfo *root, RelOptInfo *rel, RangeTblEntry *rte)
 	 * GetRelationNodes().
 	 * create_remotequery_plan would reduce the number of nodes to 1.
 	 */
-	if (IsLocatorReplicated(rel_loc_info->locatorType))
+	if (IsRelationReplicated(rel_loc_info))
 	{
 		list_free(exec_nodes->nodeList);
 		exec_nodes->nodeList = list_copy(rel_loc_info->nodeList);
@@ -176,7 +173,7 @@ pgxc_find_remotequery_path(RelOptInfo *rel)
  * See if the nodelists corresponding to the RemoteQuery paths being joined can
  * be merged.
  */
-static ExecNodes *
+ExecNodes *
 pgxc_is_join_reducible(ExecNodes *inner_en, ExecNodes *outer_en, Relids in_relids,
 						Relids out_relids, JoinType jointype, List *join_quals,
 						List *rtables)
@@ -186,6 +183,12 @@ pgxc_is_join_reducible(ExecNodes *inner_en, ExecNodes *outer_en, Relids in_relid
 	bool		merge_replicated_only;
 	ListCell	*cell;
 
+	/*
+	 * If either of inner_en or outer_en is NULL, return NULL. We can't ship the
+	 * join when either of the sides do not have datanodes to ship to.
+	 */
+	if (!outer_en || !inner_en)
+		return NULL;
 	/*
 	 * We only support reduction of INNER, LEFT [OUTER] and FULL [OUTER] joins.
 	 * RIGHT [OUTER] join is converted to LEFT [OUTER] join during join tree
@@ -210,7 +213,7 @@ pgxc_is_join_reducible(ExecNodes *inner_en, ExecNodes *outer_en, Relids in_relid
 	 * such case, we can reduce the JOIN if the distribution nodelist is also
 	 * same.
 	 */
-	if (IsLocatorDistributedByValue(inner_en->baselocatortype) &&
+	if (IsExecNodesDistributedByValue(inner_en) &&
 		inner_en->baselocatortype == outer_en->baselocatortype &&
 		!merge_replicated_only)
 	{
