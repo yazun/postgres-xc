@@ -233,7 +233,7 @@ GetRelationDistribColumn(RelationLocInfo *locInfo)
 		return NULL;
 
 	/* No distribution column if relation is not distributed with a key */
-	if (!IsLocatorDistributedByValue(locInfo->locatorType))
+	if (!IsRelationDistributedByValue(locInfo))
 		return NULL;
 
 	/* Return column name */
@@ -255,7 +255,7 @@ IsDistribColumn(Oid relid, AttrNumber attNum)
 		return false;
 
 	/* No distribution column if relation is not distributed with a key */
-	if (!IsLocatorDistributedByValue(locInfo->locatorType))
+	if (!IsRelationDistributedByValue(locInfo))
 		return false;
 
 	/* Finally check if attribute is distributed */
@@ -424,6 +424,7 @@ GetRelationNodes(RelationLocInfo *rel_loc_info, Datum valueForDistCol,
 
 	exec_nodes = makeNode(ExecNodes);
 	exec_nodes->baselocatortype = rel_loc_info->locatorType;
+	exec_nodes->accesstype = accessType;
 
 	switch (rel_loc_info->locatorType)
 	{
@@ -571,7 +572,7 @@ GetRelationNodesByQuals(Oid reloid, Index varno, Node *quals,
 	 * If the table distributed by value, check if we can reduce the Datanodes
 	 * by looking at the qualifiers for this relation
 	 */
-	if (IsLocatorDistributedByValue(rel_loc_info->locatorType))
+	if (IsRelationDistributedByValue(rel_loc_info))
 	{
 		Oid		disttype = get_atttype(reloid, rel_loc_info->partAttrNum);
 		int32	disttypmod = get_atttypmod(reloid, rel_loc_info->partAttrNum);
